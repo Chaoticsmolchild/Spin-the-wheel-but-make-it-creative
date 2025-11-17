@@ -1,0 +1,1189 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { Trash2, Plus, Settings, X, ChevronLeft, ChevronRight, Image, Maximize, Minimize, ExternalLink } from 'lucide-react';
+
+export default function SpinTheWheel() {
+  const [wheels, setWheels] = useState([
+    {
+      id: 1,
+      name: 'Wheel 1',
+      options: [
+        { text: 'Option 1', icon: null, color: '#e1e31b' },
+        { text: 'Option 2', icon: null, color: '#000000' },
+        { text: 'Option 3', icon: null, color: '#e1e31b' },
+        { text: 'Option 4', icon: null, color: '#000000' }
+      ],
+      defaultColors: ['#e1e31b', '#000000', '#e1e31b', '#000000', '#e1e31b', '#000000'],
+      textColor: '#000000',
+      borderColor: '#000000',
+      centerColor: '#FFFFFF',
+      pointerColor: '#e1e31b',
+      centerImage: null,
+      results: []
+    }
+  ]);
+  
+  const [logoImage, setLogoImage] = useState(null);
+  const [notes, setNotes] = useState('');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [detachedWindow, setDetachedWindow] = useState(null);
+  const [currentWheelIndex, setCurrentWheelIndex] = useState(0);
+  const [newOption, setNewOption] = useState('');
+  const [spinning, setSpinning] = useState(false);
+  const [rotation, setRotation] = useState(0);
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [showPopup, setShowPopup] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [editingIcon, setEditingIcon] = useState(null);
+  const [editingColor, setEditingColor] = useState(null);
+  
+  const canvasRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const centerImageInputRef = useRef(null);
+  const logoInputRef = useRef(null);
+  const iconCache = useRef({});
+  const wheelContainerRef = useRef(null);
+
+  const currentWheel = wheels[currentWheelIndex];
+
+  useEffect(() => {
+    drawWheel();
+  }, [currentWheel, rotation]);
+
+  const loadImage = (src) => {
+    return new Promise((resolve, reject) => {
+      if (iconCache.current[src]) {
+        resolve(iconCache.current[src]);
+        return;
+      }
+      const img = new window.Image();
+      img.onload = () => {
+        iconCache.current[src] = img;
+        resolve(img);
+      };
+      img.onerror = reject;
+      img.src = src;
+    });
+  };
+
+  const drawWheel = async () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    // Enable high DPI rendering
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    
+    // Enable image smoothing for better quality
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const radius = Math.min(centerX, centerY) - 10;
+    
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    
+    if (currentWheel.options.length === 0) {
+      ctx.fillStyle = '#f5f5f5';
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.strokeStyle = currentWheel.borderColor;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      return;
+    }
+    
+    const anglePerOption = (2 * Math.PI) / currentWheel.options.length;
+    
+    // Draw segments
+    for (let i = 0; i < currentWheel.options.length; i++) {
+      const option = currentWheel.options[i];
+      const startAngle = i * anglePerOption + (rotation * Math.PI / 180);
+      const endAngle = startAngle + anglePerOption;
+      
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+      ctx.closePath();
+      
+      ctx.fillStyle = option.color || currentWheel.defaultColors[i % currentWheel.defaultColors.length];
+      ctx.fill();
+      
+      ctx.strokeStyle = currentWheel.borderColor;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(startAngle + anglePerOption / 2);
+      
+      // Draw icon if available
+      if (option.icon) {
+        try {
+          const img = await loadImage(option.icon);
+          const iconSize = 80;
+          
+          ctx.save();
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          
+          ctx.drawImage(img, radius * 0.5 - iconSize / 2, -iconSize / 2, iconSize, iconSize);
+          
+          ctx.restore();
+        } catch (e) {
+          console.error('Failed to load icon:', e);
+        }
+      }
+      
+      // Draw text - adjust color based on background
+      ctx.textAlign = 'center';
+      const bgColor = option.color || currentWheel.defaultColors[i % currentWheel.defaultColors.length];
+      ctx.fillStyle = bgColor === '#000000' ? '#FFFFFF' : '#000000';
+      ctx.font = 'bold 15px Arial';
+      const textY = option.icon ? 50 : 5;
+      ctx.fillText(option.text.length > 15 ? option.text.substring(0, 15) + '...' : option.text, radius * 0.65, textY);
+      ctx.restore();
+    }
+    
+    // Draw center circle with optional image
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 40, 0, 2 * Math.PI);
+    ctx.fillStyle = currentWheel.centerColor;
+    ctx.fill();
+    ctx.strokeStyle = currentWheel.borderColor;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  };
+
+  const spinWheel = () => {
+    if (spinning || currentWheel.options.length === 0) return;
+    
+    setSpinning(true);
+    setSelectedOption(null);
+    setShowPopup(false);
+    
+    // Update detached window status
+    if (detachedWindow && !detachedWindow.closed) {
+      const statusEl = detachedWindow.document.getElementById('status');
+      if (statusEl) statusEl.textContent = 'SPINNING...';
+    }
+    
+    const spins = 5 + Math.random() * 5;
+    const extraDegrees = Math.random() * 360;
+    const totalRotation = spins * 360 + extraDegrees;
+    
+    const duration = 4000;
+    const startTime = Date.now();
+    const startRotation = rotation;
+    
+    const animate = () => {
+      const now = Date.now();
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      const currentRotation = startRotation + totalRotation * easeOut;
+      
+      setRotation(currentRotation % 360);
+      
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        const finalRotation = currentRotation % 360;
+        const anglePerOption = 360 / currentWheel.options.length;
+        const selectedIndex = Math.floor(((360 - finalRotation + anglePerOption / 2) % 360) / anglePerOption) % currentWheel.options.length;
+        
+        const selected = currentWheel.options[selectedIndex];
+        setSelectedOption(selected);
+        setShowPopup(true);
+        setSpinning(false);
+        
+        // Update detached window with winner
+        if (detachedWindow && !detachedWindow.closed) {
+          const statusEl = detachedWindow.document.getElementById('status');
+          if (statusEl) {
+            statusEl.innerHTML = `🎉 WINNER: <span style="color: #e1e31b;">${selected.text}</span> 🎉`;
+          }
+        }
+        
+        setTimeout(() => {
+          updateWheel(currentWheelIndex, {
+            options: currentWheel.options.filter((_, i) => i !== selectedIndex),
+            results: [...currentWheel.results, { ...selected, timestamp: new Date() }]
+          });
+          setShowPopup(false);
+          setSelectedOption(null);
+          
+          // Clear detached window status
+          if (detachedWindow && !detachedWindow.closed) {
+            const statusEl = detachedWindow.document.getElementById('status');
+            if (statusEl) statusEl.textContent = '';
+          }
+        }, 3000);
+      }
+    };
+    
+    animate();
+  };
+
+  const updateWheel = (index, updates) => {
+    const newWheels = [...wheels];
+    newWheels[index] = { ...newWheels[index], ...updates };
+    setWheels(newWheels);
+  };
+
+  const addOption = () => {
+    if (newOption.trim() && currentWheel.options.length < 20) {
+      const colorIndex = currentWheel.options.length % currentWheel.defaultColors.length;
+      updateWheel(currentWheelIndex, {
+        options: [...currentWheel.options, { 
+          text: newOption.trim(), 
+          icon: null,
+          color: currentWheel.defaultColors[colorIndex]
+        }]
+      });
+      setNewOption('');
+    }
+  };
+
+  const removeOption = (index) => {
+    updateWheel(currentWheelIndex, {
+      options: currentWheel.options.filter((_, i) => i !== index)
+    });
+  };
+
+  const handleIconUpload = (e, optionIndex) => {
+    const file = e.target.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const newOptions = [...currentWheel.options];
+        newOptions[optionIndex].icon = event.target.result;
+        updateWheel(currentWheelIndex, { options: newOptions });
+        setEditingIcon(null);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCenterImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        updateWheel(currentWheelIndex, { centerImage: event.target.result });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setLogoImage(event.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeLogo = () => {
+    setLogoImage(null);
+  };
+
+  const removeCenterImage = () => {
+    updateWheel(currentWheelIndex, { centerImage: null });
+  };
+
+  const updateOptionColor = (optionIndex, color) => {
+    const newOptions = [...currentWheel.options];
+    newOptions[optionIndex].color = color;
+    updateWheel(currentWheelIndex, { options: newOptions });
+    setEditingColor(null);
+  };
+
+  const removeIcon = (optionIndex) => {
+    const newOptions = [...currentWheel.options];
+    newOptions[optionIndex].icon = null;
+    updateWheel(currentWheelIndex, { options: newOptions });
+  };
+
+  const addWheel = () => {
+    const newWheel = {
+      id: Date.now(),
+      name: `Wheel ${wheels.length + 1}`,
+      options: [],
+      defaultColors: ['#e1e31b', '#000000', '#e1e31b', '#000000', '#e1e31b', '#000000'],
+      textColor: '#000000',
+      borderColor: '#000000',
+      centerColor: '#FFFFFF',
+      pointerColor: '#e1e31b',
+      centerImage: null,
+      results: []
+    };
+    setWheels([...wheels, newWheel]);
+    setCurrentWheelIndex(wheels.length);
+  };
+
+  const deleteWheel = (index) => {
+    if (wheels.length === 1) return;
+    const newWheels = wheels.filter((_, i) => i !== index);
+    setWheels(newWheels);
+    setCurrentWheelIndex(Math.max(0, Math.min(currentWheelIndex, newWheels.length - 1)));
+  };
+
+  const removeResult = (resultIndex) => {
+    updateWheel(currentWheelIndex, {
+      results: currentWheel.results.filter((_, i) => i !== resultIndex)
+    });
+  };
+
+  const addDefaultColor = () => {
+    const newColor = currentWheel.defaultColors.length % 2 === 0 ? '#e1e31b' : '#000000';
+    updateWheel(currentWheelIndex, {
+      defaultColors: [...currentWheel.defaultColors, newColor]
+    });
+  };
+
+  const removeDefaultColor = (index) => {
+    if (currentWheel.defaultColors.length > 2) {
+      updateWheel(currentWheelIndex, {
+        defaultColors: currentWheel.defaultColors.filter((_, i) => i !== index)
+      });
+    }
+  };
+
+  const updateDefaultColor = (index, color) => {
+    const newColors = [...currentWheel.defaultColors];
+    newColors[index] = color;
+    updateWheel(currentWheelIndex, { defaultColors: newColors });
+  };
+
+  const toggleFullscreen = () => {
+    if (!isFullscreen) {
+      if (wheelContainerRef.current?.requestFullscreen) {
+        wheelContainerRef.current.requestFullscreen();
+      }
+      setIsFullscreen(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+      setIsFullscreen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    
+    // Cleanup detached window on unmount
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      if (detachedWindow && !detachedWindow.closed) {
+        detachedWindow.close();
+      }
+    };
+  }, [detachedWindow]);
+
+  const openDetachedWindow = () => {
+    if (detachedWindow && !detachedWindow.closed) {
+      detachedWindow.focus();
+      return;
+    }
+
+    const newWindow = window.open('', 'SpinWheel', 'width=800,height=800,menubar=no,toolbar=no,location=no,status=no');
+    
+    if (newWindow) {
+      newWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Spin the Wheel</title>
+            <style>
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body {
+                background: white;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                padding: 20px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+              }
+              #logo-container {
+                margin-bottom: 20px;
+                max-width: 600px;
+              }
+              #logo-container img {
+                max-height: 120px;
+                width: auto;
+                image-rendering: high-quality;
+              }
+              #wheel-container {
+                position: relative;
+                margin-bottom: 20px;
+              }
+              #pointer {
+                position: absolute;
+                top: 0;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 0;
+                height: 0;
+                border-left: 25px solid transparent;
+                border-right: 25px solid transparent;
+                border-top: 50px solid #e1e31b;
+                filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3));
+                z-index: 10;
+              }
+              #wheel-canvas {
+                display: block;
+              }
+              #center-image-container {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 80px;
+                height: 80px;
+                border-radius: 50%;
+                border: 4px solid black;
+                background: white;
+                overflow: hidden;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                pointer-events: none;
+              }
+              #center-image {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                image-rendering: high-quality;
+              }
+              #status {
+                font-size: 24px;
+                font-weight: bold;
+                color: black;
+                text-align: center;
+                min-height: 40px;
+                padding: 10px;
+              }
+              #notes-display {
+                margin-top: 20px;
+                padding: 15px;
+                border: 2px solid black;
+                border-radius: 10px;
+                max-width: 600px;
+                width: 100%;
+                background: white;
+                white-space: pre-wrap;
+                color: black;
+              }
+              .hidden { display: none !important; }
+            </style>
+          </head>
+          <body>
+            <div id="logo-container" class="hidden"></div>
+            <div id="wheel-container">
+              <div id="pointer"></div>
+              <canvas id="wheel-canvas" width="500" height="500"></canvas>
+              <div id="center-image-container" class="hidden">
+                <img id="center-image" src="" alt="Center">
+              </div>
+            </div>
+            <div id="status"></div>
+            <div id="notes-display" class="hidden"></div>
+          </body>
+        </html>
+      `);
+      
+      newWindow.document.close();
+      setDetachedWindow(newWindow);
+      
+      // Update the detached window initially
+      updateDetachedWindow(newWindow);
+      
+      // Listen for window close
+      const checkClosed = setInterval(() => {
+        if (newWindow.closed) {
+          clearInterval(checkClosed);
+          setDetachedWindow(null);
+        }
+      }, 500);
+    }
+  };
+
+  const updateDetachedWindow = (win = detachedWindow) => {
+    if (!win || win.closed) return;
+
+    const canvas = win.document.getElementById('wheel-canvas');
+    const ctx = canvas.getContext('2d');
+    const pointer = win.document.getElementById('pointer');
+    const logoContainer = win.document.getElementById('logo-container');
+    const centerImageContainer = win.document.getElementById('center-image-container');
+    const centerImageEl = win.document.getElementById('center-image');
+    const notesDisplay = win.document.getElementById('notes-display');
+    
+    // Update logo
+    if (logoImage) {
+      logoContainer.innerHTML = `<img src="${logoImage}" alt="Logo">`;
+      logoContainer.classList.remove('hidden');
+    } else {
+      logoContainer.classList.add('hidden');
+    }
+    
+    // Update pointer color
+    pointer.style.borderTopColor = currentWheel.pointerColor;
+    
+    // Update center image
+    if (currentWheel.centerImage) {
+      centerImageEl.src = currentWheel.centerImage;
+      centerImageContainer.classList.remove('hidden');
+    } else {
+      centerImageContainer.classList.add('hidden');
+    }
+    
+    // Update notes
+    if (notes.trim()) {
+      notesDisplay.textContent = notes;
+      notesDisplay.classList.remove('hidden');
+    } else {
+      notesDisplay.classList.add('hidden');
+    }
+    
+    // Draw wheel
+    drawWheelOnCanvas(ctx, canvas.width / 2, canvas.height / 2, Math.min(canvas.width, canvas.height) / 2 - 20);
+  };
+
+  const drawWheelOnCanvas = async (ctx, centerX, centerY, radius) => {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    
+    if (currentWheel.options.length === 0) {
+      ctx.fillStyle = '#f5f5f5';
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.strokeStyle = currentWheel.borderColor;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      return;
+    }
+    
+    const anglePerOption = (2 * Math.PI) / currentWheel.options.length;
+    
+    for (let i = 0; i < currentWheel.options.length; i++) {
+      const option = currentWheel.options[i];
+      const startAngle = i * anglePerOption + (rotation * Math.PI / 180);
+      const endAngle = startAngle + anglePerOption;
+      
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+      ctx.closePath();
+      
+      ctx.fillStyle = option.color || currentWheel.defaultColors[i % currentWheel.defaultColors.length];
+      ctx.fill();
+      
+      ctx.strokeStyle = currentWheel.borderColor;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(startAngle + anglePerOption / 2);
+      
+      if (option.icon) {
+        try {
+          const img = await loadImage(option.icon);
+          const iconSize = 100;
+          
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          
+          ctx.drawImage(img, radius * 0.5 - iconSize / 2, -iconSize / 2, iconSize, iconSize);
+        } catch (e) {
+          console.error('Failed to load icon:', e);
+        }
+      }
+      
+      ctx.textAlign = 'center';
+      const bgColor = option.color || currentWheel.defaultColors[i % currentWheel.defaultColors.length];
+      ctx.fillStyle = bgColor === '#000000' ? '#FFFFFF' : '#000000';
+      ctx.font = 'bold 20px Arial';
+      const textY = option.icon ? 60 : 8;
+      ctx.fillText(option.text.length > 15 ? option.text.substring(0, 15) + '...' : option.text, radius * 0.65, textY);
+      ctx.restore();
+    }
+    
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 50, 0, 2 * Math.PI);
+    ctx.fillStyle = currentWheel.centerColor;
+    ctx.fill();
+    ctx.strokeStyle = currentWheel.borderColor;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+  };
+
+  useEffect(() => {
+    if (detachedWindow && !detachedWindow.closed) {
+      updateDetachedWindow();
+    }
+  }, [currentWheel, rotation, logoImage, notes]);
+
+  return (
+    <div className="min-h-screen bg-white p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header with Logo */}
+        <div className="text-center mb-6">
+          {logoImage ? (
+            <img 
+              src={logoImage} 
+              alt="Logo" 
+              className="mx-auto max-h-48 object-contain"
+              style={{ imageRendering: 'high-quality' }}
+            />
+          ) : (
+            <>
+              <h1 className="text-4xl md:text-5xl font-bold text-black mb-2">Spin the Wheel</h1>
+              <p className="text-gray-700">Add your options and spin to make a choice!</p>
+            </>
+          )}
+        </div>
+
+        {/* Popup Notification */}
+        {showPopup && selectedOption && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md mx-4 relative border-4" style={{ borderColor: '#e1e31b' }}>
+              <button
+                onClick={() => setShowPopup(false)}
+                className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <X className="w-6 h-6 text-gray-600" />
+              </button>
+              <div className="text-center">
+                <div className="mb-4 text-6xl">🎉</div>
+                <h2 className="text-3xl font-bold text-black mb-4">Winner!</h2>
+                {selectedOption.icon && (
+                  <img 
+                    src={selectedOption.icon} 
+                    alt="" 
+                    className="w-32 h-32 object-contain mx-auto mb-4"
+                    style={{ imageRendering: 'high-quality' }}
+                  />
+                )}
+                <p className="text-4xl font-bold mb-2" style={{ color: '#e1e31b' }}>{selectedOption.text}</p>
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <p className="text-sm text-gray-500">This option will be removed in a moment...</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Wheel Navigation */}
+        <div className="bg-white rounded-xl shadow-lg border-2 border-black p-4 mb-6">
+          <div className="flex items-center justify-between gap-4">
+            <button
+              onClick={() => setCurrentWheelIndex(Math.max(0, currentWheelIndex - 1))}
+              disabled={currentWheelIndex === 0}
+              className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+            
+            <div className="flex-1 flex items-center gap-2 overflow-x-auto">
+              {wheels.map((wheel, index) => (
+                <div key={wheel.id} className="relative flex-shrink-0">
+                  <button
+                    onClick={() => setCurrentWheelIndex(index)}
+                    className={`px-4 py-2 rounded-lg font-semibold transition-all border-2 ${
+                      index === currentWheelIndex
+                        ? 'bg-black text-white border-black'
+                        : 'bg-white text-black border-black hover:bg-gray-100'
+                    }`}
+                  >
+                    {wheel.name}
+                  </button>
+                  {wheels.length > 1 && (
+                    <button
+                      onClick={() => deleteWheel(index)}
+                      className="absolute -top-2 -right-2 bg-black rounded-full p-1 hover:opacity-80"
+                    >
+                      <X className="w-3 h-3 text-white" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={addWheel}
+              className="p-2 rounded-lg text-white hover:opacity-90"
+              style={{ backgroundColor: '#e1e31b' }}
+            >
+              <Plus className="w-6 h-6" />
+            </button>
+
+            <button
+              onClick={() => setCurrentWheelIndex(Math.min(wheels.length - 1, currentWheelIndex + 1))}
+              disabled={currentWheelIndex === wheels.length - 1}
+              className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronRight className="w-6 h-6" />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid lg:grid-cols-3 gap-6">
+          {/* Wheel Section */}
+          <div className="lg:col-span-2 bg-white rounded-2xl shadow-2xl border-2 border-black p-6 md:p-8" ref={wheelContainerRef}>
+            {isFullscreen && (
+              <div className="mb-4 flex justify-end">
+                <button
+                  onClick={toggleFullscreen}
+                  className="p-2 rounded-lg hover:bg-gray-100 border-2 border-black"
+                  title="Exit Fullscreen"
+                >
+                  <Minimize className="w-6 h-6" />
+                </button>
+              </div>
+            )}
+            
+            <div className="relative">
+              {/* Pointer Arrow */}
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 z-10" style={{ filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.3))' }}>
+                <div 
+                  className="w-0 h-0"
+                  style={{
+                    borderLeft: '25px solid transparent',
+                    borderRight: '25px solid transparent',
+                    borderTop: `50px solid ${currentWheel.pointerColor}`
+                  }}
+                ></div>
+              </div>
+              
+              <canvas
+                ref={canvasRef}
+                width={400}
+                height={400}
+                className="mx-auto max-w-full"
+                style={{ width: '400px', height: '400px' }}
+              />
+              
+              {/* Center Image - In Front */}
+              {currentWheel.centerImage && (
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                  <div className="w-20 h-20 rounded-full overflow-hidden border-4 border-black bg-white flex items-center justify-center">
+                    <img 
+                      src={currentWheel.centerImage} 
+                      alt="Center" 
+                      className="w-full h-full object-cover"
+                      style={{ imageRendering: 'high-quality' }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 space-y-3">
+              <button
+                onClick={spinWheel}
+                disabled={spinning || currentWheel.options.length === 0}
+                className={`w-full py-4 rounded-xl font-bold text-xl transition-all border-2 border-black ${
+                  spinning || currentWheel.options.length === 0
+                    ? 'bg-gray-300 cursor-not-allowed text-gray-600'
+                    : 'text-black hover:opacity-90 shadow-lg hover:shadow-xl'
+                }`}
+                style={{ backgroundColor: spinning || currentWheel.options.length === 0 ? undefined : '#e1e31b' }}
+              >
+                {spinning ? 'SPINNING...' : currentWheel.options.length === 0 ? 'ADD OPTIONS FIRST' : 'SPIN THE WHEEL'}
+              </button>
+              
+              <div className="flex gap-2">
+                <button
+                  onClick={openDetachedWindow}
+                  className="flex-1 px-4 py-3 rounded-xl font-semibold border-2 border-black bg-white hover:bg-gray-100 transition-all flex items-center justify-center gap-2"
+                  title="Open wheel in a separate window for screen sharing"
+                >
+                  <ExternalLink className="w-5 h-5" />
+                  <span>Open in New Window</span>
+                </button>
+                
+                {!isFullscreen && (
+                  <button
+                    onClick={toggleFullscreen}
+                    className="px-4 py-3 rounded-xl font-semibold border-2 border-black bg-white hover:bg-gray-100 transition-all flex items-center justify-center gap-2"
+                    title="Enter fullscreen mode"
+                  >
+                    <Maximize className="w-5 h-5" />
+                    <span className="hidden sm:inline">Fullscreen</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Notes Section */}
+            <div className="mt-6">
+              <label className="block text-sm font-semibold text-black mb-2">Notes</label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Add notes or instructions here..."
+                className="w-full px-4 py-3 border-2 border-black rounded-lg focus:outline-none resize-none"
+                rows={3}
+              />
+            </div>
+
+            {/* Results Display */}
+            {currentWheel.results.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-lg font-bold text-black mb-3">Previous Results</h3>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {currentWheel.results.map((result, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-3 bg-white border-2 border-black rounded-lg"
+                    >
+                      <div className="flex items-center gap-3">
+                        {result.icon && (
+                          <img 
+                            src={result.icon} 
+                            alt="" 
+                            className="w-8 h-8 object-contain"
+                            style={{ imageRendering: 'high-quality' }}
+                          />
+                        )}
+                        <span className="text-black font-medium">{result.text}</span>
+                      </div>
+                      <button
+                        onClick={() => removeResult(index)}
+                        className="p-1 hover:bg-gray-100 rounded transition-colors"
+                      >
+                        <X className="w-4 h-4 text-black" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Options Section */}
+          <div className="bg-white rounded-2xl shadow-2xl border-2 border-black p-6 md:p-8">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl md:text-2xl font-bold text-black">Options ({currentWheel.options.length})</h2>
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <Settings className="w-6 h-6 text-black" />
+              </button>
+            </div>
+
+            {/* Add Option */}
+            <div className="flex gap-2 mb-6">
+              <input
+                type="text"
+                value={newOption}
+                onChange={(e) => setNewOption(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && addOption()}
+                placeholder="Enter new option..."
+                className="flex-1 px-4 py-3 border-2 border-black rounded-lg focus:outline-none text-sm"
+                style={{ focusBorderColor: '#e1e31b' }}
+                maxLength={30}
+              />
+              <button
+                onClick={addOption}
+                className="px-4 py-3 text-black rounded-lg hover:opacity-90 transition-colors border-2 border-black"
+                style={{ backgroundColor: '#e1e31b' }}
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Options List */}
+            <div className="space-y-2 max-h-80 overflow-y-auto mb-6">
+              {currentWheel.options.map((option, index) => (
+                <div
+                  key={index}
+                  className="flex items-center justify-between p-3 bg-gray-50 border border-black rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div
+                      className="w-6 h-6 rounded-full flex-shrink-0 cursor-pointer border-2 border-black"
+                      style={{ backgroundColor: option.color }}
+                      onClick={() => setEditingColor(index)}
+                      title="Click to change color"
+                    />
+                    {option.icon && (
+                      <img 
+                        src={option.icon} 
+                        alt="" 
+                        className="w-12 h-12 object-contain flex-shrink-0"
+                        style={{ imageRendering: 'high-quality' }}
+                      />
+                    )}
+                    <span className="text-black text-sm truncate">{option.text}</span>
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => {
+                        setEditingIcon(index);
+                        fileInputRef.current?.click();
+                      }}
+                      className="p-1 hover:bg-gray-200 rounded transition-colors"
+                      title={option.icon ? "Change icon" : "Add icon"}
+                    >
+                      <Image className="w-4 h-4 text-black" />
+                    </button>
+                    {option.icon && (
+                      <button
+                        onClick={() => removeIcon(index)}
+                        className="p-1 hover:bg-gray-200 rounded transition-colors"
+                        title="Remove icon"
+                      >
+                        <X className="w-4 h-4 text-black" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => removeOption(index)}
+                      className="p-1 hover:bg-gray-200 rounded transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4 text-black" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/gif"
+              onChange={(e) => editingIcon !== null && handleIconUpload(e, editingIcon)}
+              className="hidden"
+            />
+
+            <input
+              ref={centerImageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/gif"
+              onChange={handleCenterImageUpload}
+              className="hidden"
+            />
+
+            <input
+              ref={logoInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/gif"
+              onChange={handleLogoUpload}
+              className="hidden"
+            />
+
+            {/* Color Picker Popup */}
+            {editingColor !== null && (
+              <div className="fixed inset-0 z-40 flex items-center justify-center bg-black bg-opacity-50" onClick={() => setEditingColor(null)}>
+                <div className="bg-white rounded-lg p-6 shadow-xl border-2 border-black" onClick={(e) => e.stopPropagation()}>
+                  <h3 className="text-lg font-bold mb-4">Choose Color</h3>
+                  <input
+                    type="color"
+                    value={currentWheel.options[editingColor]?.color}
+                    onChange={(e) => updateOptionColor(editingColor, e.target.value)}
+                    className="w-48 h-48 cursor-pointer border-0"
+                  />
+                  <button
+                    onClick={() => setEditingColor(null)}
+                    className="mt-4 w-full py-2 text-black rounded-lg hover:opacity-90 border-2 border-black"
+                    style={{ backgroundColor: '#e1e31b' }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Settings Panel */}
+            {showSettings && (
+              <div className="border-t-2 border-black pt-6">
+                <h3 className="text-lg font-bold text-black mb-4">Customization</h3>
+                
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-black mb-2">Header Logo</label>
+                  <div className="flex items-center gap-2">
+                    {logoImage ? (
+                      <div className="flex items-center gap-2 flex-1">
+                        <img 
+                          src={logoImage} 
+                          alt="Logo" 
+                          className="h-16 object-contain border-2 border-black"
+                          style={{ imageRendering: 'high-quality' }}
+                        />
+                        <button
+                          onClick={removeLogo}
+                          className="px-3 py-2 bg-black text-white rounded-lg hover:opacity-90 text-sm"
+                        >
+                          Remove
+                        </button>
+                        <button
+                          onClick={() => logoInputRef.current?.click()}
+                          className="px-3 py-2 text-black rounded-lg hover:opacity-90 text-sm border-2 border-black"
+                          style={{ backgroundColor: '#e1e31b' }}
+                        >
+                          Change
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => logoInputRef.current?.click()}
+                        className="w-full px-4 py-3 text-black rounded-lg hover:opacity-90 flex items-center justify-center gap-2 border-2 border-black"
+                        style={{ backgroundColor: '#e1e31b' }}
+                      >
+                        <Image className="w-5 h-5" />
+                        Upload Logo
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">Replaces the "Spin the Wheel" title</p>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-black mb-2">Wheel Name</label>
+                  <input
+                    type="text"
+                    value={currentWheel.name}
+                    onChange={(e) => updateWheel(currentWheelIndex, { name: e.target.value })}
+                    className="w-full px-3 py-2 border-2 border-black rounded-lg focus:outline-none"
+                    maxLength={20}
+                  />
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-black mb-2">Center Image</label>
+                  <div className="flex items-center gap-2">
+                    {currentWheel.centerImage ? (
+                      <div className="flex items-center gap-2 flex-1">
+                        <img 
+                          src={currentWheel.centerImage} 
+                          alt="Center" 
+                          className="w-16 h-16 object-cover rounded-full border-2 border-black"
+                          style={{ imageRendering: 'high-quality' }}
+                        />
+                        <button
+                          onClick={removeCenterImage}
+                          className="px-3 py-2 bg-black text-white rounded-lg hover:opacity-90 text-sm"
+                        >
+                          Remove
+                        </button>
+                        <button
+                          onClick={() => centerImageInputRef.current?.click()}
+                          className="px-3 py-2 text-black rounded-lg hover:opacity-90 text-sm border-2 border-black"
+                          style={{ backgroundColor: '#e1e31b' }}
+                        >
+                          Change
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => centerImageInputRef.current?.click()}
+                        className="w-full px-4 py-3 text-black rounded-lg hover:opacity-90 flex items-center justify-center gap-2 border-2 border-black"
+                        style={{ backgroundColor: '#e1e31b' }}
+                      >
+                        <Image className="w-5 h-5" />
+                        Upload Center Image
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">This image appears in the center of the wheel</p>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-black mb-2">Default Segment Colors</label>
+                  <p className="text-xs text-gray-600 mb-2">These colors are used for new options</p>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {currentWheel.defaultColors.map((color, index) => (
+                      <div key={index} className="relative group">
+                        <input
+                          type="color"
+                          value={color}
+                          onChange={(e) => updateDefaultColor(index, e.target.value)}
+                          className="w-10 h-10 rounded cursor-pointer border-2 border-black"
+                        />
+                        {currentWheel.defaultColors.length > 2 && (
+                          <button
+                            onClick={() => removeDefaultColor(index)}
+                            className="absolute -top-1 -right-1 bg-black rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X className="w-3 h-3 text-white" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button
+                      onClick={addDefaultColor}
+                      className="w-10 h-10 border-2 border-dashed border-black rounded hover:bg-gray-100 flex items-center justify-center"
+                    >
+                      <Plus className="w-5 h-5 text-black" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-black mb-1">Text Color</label>
+                    <input
+                      type="color"
+                      value={currentWheel.textColor}
+                      onChange={(e) => updateWheel(currentWheelIndex, { textColor: e.target.value })}
+                      className="w-full h-10 rounded cursor-pointer border-2 border-black"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-black mb-1">Border Color</label>
+                    <input
+                      type="color"
+                      value={currentWheel.borderColor}
+                      onChange={(e) => updateWheel(currentWheelIndex, { borderColor: e.target.value })}
+                      className="w-full h-10 rounded cursor-pointer border-2 border-black"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-black mb-1">Center Color</label>
+                    <input
+                      type="color"
+                      value={currentWheel.centerColor}
+                      onChange={(e) => updateWheel(currentWheelIndex, { centerColor: e.target.value })}
+                      className="w-full h-10 rounded cursor-pointer border-2 border-black"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-black mb-1">Pointer Color</label>
+                    <input
+                      type="color"
+                      value={currentWheel.pointerColor}
+                      onChange={(e) => updateWheel(currentWheelIndex, { pointerColor: e.target.value })}
+                      className="w-full h-10 rounded cursor-pointer border-2 border-black"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
